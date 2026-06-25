@@ -25,6 +25,13 @@ services:
       timeout: 3s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   api:
     build:
       context: ./backend
@@ -36,11 +43,15 @@ services:
       DATABASE_URL: postgresql+psycopg_async://postgres:postgres@db:5432/workflow_db
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: dev-only-change-me
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_DEFAULT_MODEL: gemma4:e4b
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_started
 
   worker:
     build:
@@ -50,11 +61,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg_async://postgres:postgres@db:5432/workflow_db
       REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_DEFAULT_MODEL: gemma4:e4b
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_started
 
 volumes:
   workflow_pgdata:
+  ollama_data:

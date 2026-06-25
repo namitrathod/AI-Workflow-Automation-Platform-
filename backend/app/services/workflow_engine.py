@@ -1,6 +1,7 @@
 """Synchronous (in-request) workflow runner — Phase 2 execution tracking.
 
 Phase 3 replaces the transport with a queue + workers; this module stays the core step runner.
+Phase 4 runs steps via the registry (LLM via Ollama/Gemma, tools, builtins).
 """
 
 from __future__ import annotations
@@ -17,35 +18,17 @@ from app.models.execution import Execution
 from app.models.job import Job
 from app.models.workflow import Workflow
 from app.schemas.workflow import WorkflowDefinition
+from app.steps.context import StepContext
+from app.steps.registry import ensure_handlers_loaded, run_step
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _run_step_logic(
-    step_name: str,
-    trigger: str,
-    job_payload: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Placeholder step implementations — swap for LLM/tools in Phase 4."""
-    base: dict[str, Any] = {
-        "step": step_name,
-        "trigger": trigger,
-        "payload_keys": sorted((job_payload or {}).keys()),
-    }
-    stubs: dict[str, dict[str, Any]] = {
-        "summarize_email": {"summary": "(stub) Email summarized for routing."},
-        "classify_intent": {"intent": "support_request", "priority": "medium"},
-        "create_ticket": {"ticket_id": "stub-TICK-1001", "url": "https://example.invalid/t/stub-TICK-1001"},
-    }
-    if step_name in stubs:
-        return {**base, **stubs[step_name]}
-    return {**base, "result": "completed", "note": "generic stub; map step names in workflow_engine for richer output"}
-
-
 async def run_job(session: AsyncSession, job: Job, workflow: Workflow) -> Job:
     """Execute all steps in order; persists `Execution` rows and updates `Job` status."""
+    ensure_handlers_loaded()
     await session.execute(delete(Execution).where(Execution.job_id == job.id))
 
     job.status = "running"
@@ -76,10 +59,11 @@ async def run_job(session: AsyncSession, job: Job, workflow: Workflow) -> Job:
         await session.commit()
         return await _reload_job(session, job.id)
 
-    steps = definition.steps
     trigger = definition.trigger
+    prior_outputs: dict[str, dict[str, Any]] = {}
 
-    for idx, step_name in enumerate(steps):
+    for idx, step_spec in enumerate(definition.steps):
+        step_name = step_spec.id
         ex = Execution(
             tenant_id=job.tenant_id,
             job_id=job.id,
@@ -90,8 +74,18 @@ async def run_job(session: AsyncSession, job: Job, workflow: Workflow) -> Job:
         )
         session.add(ex)
         await session.flush()
+        ctx = StepContext(
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            trigger=trigger,
+            payload=job.payload,
+            step_index=idx,
+            step_spec=step_spec,
+            prior_outputs=prior_outputs,
+        )
         try:
-            output = await _run_step_logic(step_name, trigger, job.payload)
+            output = await run_step(ctx)
+            prior_outputs[step_name] = output
             ex.status = "completed"
             ex.output = output
             ex.error = None

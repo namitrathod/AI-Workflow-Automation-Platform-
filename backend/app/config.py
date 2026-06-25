@@ -19,5 +19,10 @@ class Settings(BaseSettings):
     retry_backoff_cap_seconds: int = 60
     retry_on_workflow_failure: bool = False
 
+    # Phase 4 — local LLM via Ollama (Gemma 4)
+    ollama_base_url: str = "http://localhost:11434"
+    llm_default_model: str = "gemma4:e4b"
+    llm_timeout_seconds: int = 120
+
 
 settings = Settings()

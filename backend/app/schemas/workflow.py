@@ -1,21 +1,33 @@
 import uuid
 from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
+
+from app.schemas.step import StepSpec
 
 
 class WorkflowDefinition(BaseModel):
-    """JSON workflow body aligned with Phase 2 shape (validated at API boundary)."""
+    """Workflow body. String steps map to builtins; rich steps use llm/tool specs."""
 
     trigger: str = Field(..., min_length=1, max_length=128)
-    steps: list[str] = Field(..., min_length=1)
+    steps: list[StepSpec] = Field(..., min_length=1)
 
-    @field_validator("steps")
+    @field_validator("steps", mode="before")
     @classmethod
-    def non_empty_step_ids(cls, v: list[str]) -> list[str]:
-        for s in v:
-            if not s.strip():
-                raise ValueError("step names must be non-empty")
-        return v
+    def normalize_steps(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            raise ValueError("steps must be a list")
+        out: list[Any] = []
+        for item in v:
+            if isinstance(item, str):
+                name = item.strip()
+                if not name:
+                    raise ValueError("step names must be non-empty")
+                out.append({"type": "builtin", "id": name, "name": name})
+            else:
+                out.append(item)
+        return out
 
 
 class WorkflowCreate(BaseModel):
